@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>動画保存数ランキング</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  :root {
+    --bg: #0f1419;
+    --card: #16202a;
+    --border: #2f3b47;
+    --text: #e7e9ea;
+    --sub: #8b98a5;
+    --accent: #1d9bf0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+    padding: 16px;
+    max-width: 640px;
+    margin-inline: auto;
+  }
+  h1 {
+    font-size: 1.3rem;
+    margin-bottom: 4px;
+  }
+  .sub {
+    color: var(--sub);
+    font-size: 0.85rem;
+    margin-bottom: 20px;
+  }
+  form {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+  input[type="url"] {
+    flex: 1;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text);
+    font-size: 1rem;
+  }
+  button {
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    font-weight: bold;
+    font-size: 1rem;
+  }
+  button:active { opacity: 0.7; }
+  .status {
+    font-size: 0.85rem;
+    color: var(--sub);
+    margin: -12px 0 16px;
+    min-height: 1.2em;
+  }
+  .item {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 16px;
+  }
+  .item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .rank {
+    font-weight: bold;
+    color: var(--accent);
+  }
+  .count-badge {
+    background: rgba(29,155,240,0.15);
+    color: var(--accent);
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: bold;
+  }
+  .save-btn {
+    width: 100%;
+    margin-top: 8px;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+  }
+  .empty {
+    color: var(--sub);
+    text-align: center;
+    padding: 40px 0;
+  }
+</style>
+</head>
+<body>
+
+<h1>🎬 動画保存数ランキング</h1>
+<p class="sub">Xの動画URLを登録して、みんなで「保存」して人気順に並べよう</p>
+
+<form id="add-form">
+  <input type="url" id="url-input" placeholder="https://x.com/.../status/..." required>
+  <button type="submit">追加</button>
+</form>
+<div class="status" id="status"></div>
+
+<div id="list"></div>
+
+<script>
+  // ↓↓↓ ここをSupabaseの値に書き換えてください ↓↓↓
+  const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
+  const SUPABASE_ANON_KEY = "YOUR-ANON-KEY";
+  // ↑↑↑ ここまで ↑↑↑
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const listEl = document.getElementById("list");
+  const statusEl = document.getElementById("status");
+  const form = document.getElementById("add-form");
+  const urlInput = document.getElementById("url-input");
+
+  function normalizeUrl(raw) {
+    try {
+      const u = new URL(raw.trim());
+      u.search = "";
+      u.hash = "";
+      // x.com / twitter.com を統一
+      u.hostname = u.hostname.replace("twitter.com", "x.com");
+      return u.toString().replace(/\/$/, "");
+    } catch {
+      return null;
+    }
+  }
+
+  async function loadRanking() {
+    listEl.innerHTML = '<p class="empty">読み込み中...</p>';
+    const { data, error } = await sb
+      .from("videos")
+      .select("*")
+      .order("save_count", { ascending: false })
+      .limit(50);
+
+    if (error) {
+      listEl.innerHTML = '<p class="empty">読み込みエラー: ' + error.message + "</p>";
+      return;
+    }
+    if (!data || data.length === 0) {
+      listEl.innerHTML = '<p class="empty">まだ登録がありません。最初の1件を追加しよう。</p>';
+      return;
+    }
+
+    listEl.innerHTML = "";
+    data.forEach((row, i) => {
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `
+        <div class="item-header">
+          <span class="rank">#${i + 1}</span>
+          <span class="count-badge">💾 ${row.save_count}</span>
+        </div>
+        <blockquote class="twitter-tweet" data-dnt="true">
+          <a href="${row.url}"></a>
+        </blockquote>
+        <button class="save-btn" data-url="${row.url}">＋1 保存する</button>
+      `;
+      listEl.appendChild(div);
+    });
+
+    // Xの埋め込みウィジェットを描画
+    if (window.twttr && window.twttr.widgets) {
+      window.twttr.widgets.load(listEl);
+    }
+
+    // 保存ボタンのイベント
+    listEl.querySelectorAll(".save-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        await sb.rpc("increment_save", { p_url: btn.dataset.url });
+        await loadRanking();
+      });
+    });
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const normalized = normalizeUrl(urlInput.value);
+    if (!normalized || !normalized.includes("/status/")) {
+      statusEl.textContent = "有効なXの投稿URLを入力してください";
+      return;
+    }
+    statusEl.textContent = "登録中...";
+    const { error } = await sb.rpc("increment_save", { p_url: normalized });
+    if (error) {
+      statusEl.textContent = "エラー: " + error.message;
+    } else {
+      statusEl.textContent = "登録しました！";
+      urlInput.value = "";
+      loadRanking();
+    }
+  });
+
+  loadRanking();
+</script>
+
+<!-- X公式の埋め込み用スクリプト -->
+<script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
+
+</body>
+</html>
